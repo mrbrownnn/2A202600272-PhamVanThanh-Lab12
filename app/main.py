@@ -17,7 +17,7 @@ from app.rate_limiter import RateLimiter
 from app.cost_guard import CostGuard
 
 # Mock LLM (thay bằng OpenAI/Anthropic khi có API key)
-from utils.mock_llm import ask as llm_ask
+from app.mock_llm import ask as llm_ask
 
 # ─────────────────────────────────────────────────────────
 # Logging — JSON structured
