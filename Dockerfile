@@ -1,48 +1,52 @@
 # ============================================================
-# Production Dockerfile — Multi-stage, < 500 MB, non-root
+# Production Dockerfile — Multi-stage, virtualenv, non-root
 # ============================================================
 
-# Stage 1: Builder
+# Stage 1: Builder — cài dependencies vào virtualenv
 FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y gcc libpq-dev \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
 
-# Stage 2: Runtime
+# Stage 2: Runtime — slim image, non-root
 FROM python:3.11-slim AS runtime
 
-# Non-root user
-RUN groupadd -r agent && useradd -r -g agent -d /app agent
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app
+
+RUN groupadd -r agent && useradd -r -g agent -d /app -s /sbin/nologin agent
 
 WORKDIR /app
 
-# Copy packages from builder into the runtime user's home
-COPY --from=builder /root/.local /app/.local
+COPY --from=builder /opt/venv /opt/venv
 
-# Copy application
 COPY app/ ./app/
 
-RUN chown -R agent:agent /app
+RUN chown -R agent:agent /app /opt/venv
 
 USER agent
 
-ENV PATH=/app/.local/bin:$PATH
-ENV PYTHONPATH=/app
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
 EXPOSE 8000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c \
-    "import os, urllib.request; urllib.request.urlopen('http://localhost:%s/health' % os.getenv('PORT', '8000'))" \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/health' % os.getenv('PORT', '8000'))" \
     || exit 1
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-1}"]
